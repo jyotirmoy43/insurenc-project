@@ -1,1 +1,20 @@
 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insurence-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: insurence-app
+  template:
+    metadata:
+      labels:
+        app: insurence-app
+    spec:
+      containers:
+        - name: insurence-container
+          image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 8081
