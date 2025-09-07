@@ -1,16 +1,16 @@
-
 pipeline {
     agent any
 
     tools {
-        maven '3.6.3' // Make sure this matches the configured Maven version in Jenkins
+        maven '3.6.3'
     }
 
     environment {
         MAVEN_OPTS = "-Dmaven.repo.local=.m2/repository"
         IMAGE_NAME = "jyotirmoy43/myimg2"
-        CONTAINER_NAME = "c${env.BUILD_NUMBER}"
         APP_PORT = "8081"
+        K8S_NAMESPACE = "default"
+        DEPLOYMENT_NAME = "insurence-app"
     }
 
     stages {
@@ -38,7 +38,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 echo '🐳 Building Docker image...'
-                sh 'docker build -t $IMAGE_NAME .'
+                sh 'docker build -t $IMAGE_NAME:$BUILD_NUMBER .'
             }
         }
 
@@ -48,26 +48,26 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push $IMAGE_NAME
+                        docker push $IMAGE_NAME:$BUILD_NUMBER
                     '''
                 }
             }
         }
 
-        stage('Run Docker Container') {
+        stage('Deploy to Kubernetes') {
             steps {
-                echo '🚀 Running Docker container...'
+                echo '🚀 Deploying application to Kubernetes...'
                 sh '''
-                    # Stop any container already using the host port (optional clean-up)
-                    OLD_CONTAINER=$(docker ps -q --filter "publish=$APP_PORT")
-                    if [ ! -z "$OLD_CONTAINER" ]; then
-                        echo "🛑 Stopping old container using port $APP_PORT..."
-                        docker stop $OLD_CONTAINER
-                        docker rm $OLD_CONTAINER
-                    fi
+                    # Make a copy of deployment.yaml and inject the new image
+                    cp k8s/deployment.yaml k8s/deployment-temp.yaml
+                    sed -i "s|IMAGE_PLACEHOLDER|$IMAGE_NAME:$BUILD_NUMBER|g" k8s/deployment-temp.yaml
 
-                    # Run new container
-                    docker run -dt -p $APP_PORT:$APP_PORT --name $CONTAINER_NAME $IMAGE_NAME
+                    # Apply manifests
+                    kubectl apply -f k8s/deployment-temp.yaml -n $K8S_NAMESPACE
+                    kubectl apply -f k8s/service.yaml -n $K8S_NAMESPACE
+
+                    # Wait for rollout
+                    kubectl rollout status deployment/$DEPLOYMENT_NAME -n $K8S_NAMESPACE
                 '''
             }
         }
@@ -75,8 +75,8 @@ pipeline {
 
     post {
         success {
-            echo '✅ Build and deployment completed successfully!'
-            echo "🌐 App should be available at http://<YOUR-SERVER-IP>:${APP_PORT}"
+            echo '✅ Build and Kubernetes deployment completed successfully!'
+            echo "🌐 App should be available via Kubernetes Service on port ${APP_PORT}"
         }
         failure {
             echo '❌ Build or deployment failed. Check the logs.'
